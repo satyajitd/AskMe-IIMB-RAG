@@ -1,5 +1,4 @@
-import os
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearch
 
-os.environ['TAVILY_API_KEY'] = "YOUR API KEY"
-web_search_tool = TavilySearchResults(k=3)
+# Initialize the Tavily search tool
+web_search_tool = TavilySearch(max_results=5, search_depth="basic")

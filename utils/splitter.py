@@ -1,21 +1,27 @@
+import os
 import logging
 from pathlib import Path
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+
+from utils import env
 
 from langchain_core.documents import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 class Splitter(RecursiveCharacterTextSplitter):
     def __init__(self, **kwargs):
+        self._chunk_size = os.getenv(env.CHUNK_SIZE)
+        self._chunk_overlap = os.getenv(env.CHUNK_OVERLAP)
+
         super().__init__(**kwargs)
         self.configure_logging()
 
     def split_documents(self, documents) -> list[Document]:
         self.logger.info(f"Splitting {len(documents)} documents into smaller chunks.")
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=512,
-            chunk_overlap=0,
+            chunk_size=self._chunk_size,
+            chunk_overlap=self._chunk_overlap,
             length_function=len,
         )
         split_documents = text_splitter.split_documents(documents)
@@ -46,6 +52,3 @@ class Splitter(RecursiveCharacterTextSplitter):
                 stream_handler.setLevel(logging.WARNING)
                 self.logger.warning("Could not create log file handler at %s", self.log_file)
         self.logger.setLevel(level=logging.INFO)
-
-
-__all__ = ["Splitter"]

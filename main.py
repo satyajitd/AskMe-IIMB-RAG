@@ -3,8 +3,10 @@ import re
 import json
 from langchain_core.documents import Document
 
-from splitter import Splitter
-from vectorstore import VectorStore
+from utils.splitter import Splitter
+from store.vectorstore import vector_store
+
+from workflow.workflow import Workflow
 
 def find_json_files(folder_path) -> list[str]:
     """
@@ -96,12 +98,14 @@ def get_documents_from_json(file_path: str) -> list[Document]:
     
 
 if __name__ == "__main__":
-    folder_path = './data'
-    json_files = find_json_files(folder_path)
-    documents = get_documents(json_files)
+    # folder_path = './data'
+    # json_files = find_json_files(folder_path)
+    # documents = get_documents(json_files)
 
-    splitter = Splitter()
-    vector_store = VectorStore(collection_name="my_collection")  
+    # splitter = Splitter()
+    # split_docs = splitter.split_documents(documents)
+    # vector_store.store(split_docs)
 
-    split_docs = splitter.split_documents(documents)
-    vector_store.store(split_docs)
+    # app = Workflow().define_workflow()
+
+    vector_store.test_connection()
