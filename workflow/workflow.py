@@ -1,3 +1,4 @@
+import os
 import json
 from langchain_core.documents import Document
 from langgraph.graph import END, StateGraph
@@ -39,7 +40,7 @@ class Workflow:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.log_dir = Path.cwd() / "log"
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = self.log_dir / f"workflow.log"
+        self.log_file = os.getenv("APP_LOG")
 
         # Configure handlers only if not already present to avoid duplicate logs
         if not self.logger.handlers:

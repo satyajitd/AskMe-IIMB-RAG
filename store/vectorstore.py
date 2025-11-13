@@ -1,3 +1,4 @@
+import os
 import logging
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
@@ -46,7 +47,7 @@ class VectorStore(Chroma):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.log_dir = Path.cwd() / "log"
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = self.log_dir / f"vectorstore.log"
+        self.log_file = os.getenv("APP_LOG")
         
         # Configure handlers only if not already present to avoid duplicate logs
         if not self.logger.handlers:

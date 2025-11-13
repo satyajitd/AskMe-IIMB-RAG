@@ -1,3 +1,4 @@
+import os
 import time
 from langchain_core.prompts import PromptTemplate
 
@@ -54,7 +55,7 @@ class GeneratorChain:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.log_dir = Path.cwd() / "log"
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = self.log_dir / f"generator.log"
+        self.log_file = os.getenv("APP_LOG")
 
         # Configure handlers only if not already present to avoid duplicate logs
         if not self.logger.handlers:
