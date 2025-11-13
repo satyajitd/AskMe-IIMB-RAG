@@ -21,9 +21,15 @@ services:
       - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
       - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-askme-iimb-rag}
-      # ChromaDB Configuration
-      - CHROMA_SERVER_HOST=${CHROMA_SERVER_HOST:-0.0.0.0}
+      # ChromaDB Configuration - connect to the Chroma service by its Docker service name
+      - CHROMA_SERVER_HOST=${CHROMA_SERVER_HOST:-chromadb}
       - CHROMA_SERVER_PORT=${CHROMA_SERVER_PORT:-8000}
       - CHROMA_COLLECTION_NAME=${CHROMA_COLLECTION_NAME:-iimb-rag}
       # Application Logging
       - APP_LOG=/app/log/rag_app.log
+    networks:
+      - askme-network
+
+networks:
+  askme-network:
+    external: true
