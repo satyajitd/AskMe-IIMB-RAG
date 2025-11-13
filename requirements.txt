@@ -7,3 +7,6 @@ langchain-ollama
 langgraph
 chromadb
 fastembed
+langsmith
+python-dotenv
+langgraph-cli[inmem]

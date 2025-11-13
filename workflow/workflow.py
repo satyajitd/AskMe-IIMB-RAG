@@ -137,15 +137,28 @@ class Workflow:
             str: Next node to route to, either "web_search" or "vector_store"
         """
         question = state[constants.QUESTION]
-        llm_response = self.router.invoke({constants.QUESTION: question})  
-        source = json.loads(llm_response)
+        llm_response = self.router.invoke({constants.QUESTION: question})
+        self.logger.info("Raw router response: %s", llm_response)
+        
+        try:
+            source = json.loads(llm_response)
+        except json.JSONDecodeError as e:
+            self.logger.error("Failed to parse router response as JSON: %s. Response: %s", e, llm_response)
+            # Default to vectorstore on parse error
+            return constants.VECTOR_STORE
+        
         self.logger.info("Routing decision for question '%s': %s", question, source)
         
-        if source[constants.DATASOURCE] == constants.WEB_SEARCH:
+        datasource = source.get(constants.DATASOURCE, "").lower()
+        if datasource == constants.WEB_SEARCH:
             self.logger.info("Routing to web search.")
             return constants.WEB_SEARCH
-        elif source[constants.DATASOURCE] == constants.VECTOR_STORE:
+        elif datasource == constants.VECTOR_STORE or datasource == "vectorstore":
             self.logger.info("Routing to RAG.")
+            return constants.VECTOR_STORE
+        else:
+            # Default to vectorstore if response is unexpected
+            self.logger.warning("Unexpected datasource '%s', defaulting to vectorstore.", datasource)
             return constants.VECTOR_STORE
 
     def decide_to_generate(self, state: State) -> str:
@@ -161,14 +174,17 @@ class Workflow:
         documents = state[constants.DOCUMENTS]
         self.logger.info("Deciding next step for question '%s' with %d relevant documents.", question, len(documents))
 
-        if web_search == constants.YES and len(documents) == 0:
-            # All documents have been filtered check_relevance
-            # We will re-generate a new query
-            self.logger.info("Decision: Perform web search.")
+        if len(documents) == 0:
+            # No relevant documents found, perform web search
+            self.logger.info("Decision: No documents available, perform web search.")
+            return constants.WEB_SEARCH
+        elif web_search == constants.YES:
+            # Documents were filtered out as irrelevant
+            self.logger.info("Decision: Documents filtered as irrelevant, perform web search.")
             return constants.WEB_SEARCH
         else:
             # We have relevant documents, so generate answer
-            self.logger.info("Decision: Generate answer.")
+            self.logger.info("Decision: Generate answer with %d documents.", len(documents))
             return constants.GENERATE
 
     def grade_generation(self, state: State) -> str:
@@ -185,7 +201,8 @@ class Workflow:
         self.logger.info("Grading generation for question: %s", question)
 
         # Check hallucination
-        response = self.hallucination_grader.invoke({constants.DOCUMENTS: documents, constants.GENERATION: generation})
+        llm_response = self.hallucination_grader.invoke({constants.DOCUMENTS: documents, constants.GENERATION: generation})
+        response = json.loads(llm_response)
         grade = response[constants.SCORE]
         if grade == constants.YES:
             self.logger.info("Generation is grounded in the documents.")
@@ -213,20 +230,50 @@ class Workflow:
             state (dict): The current graph state
 
         Returns:
-            state (dict): Appended web results to documents
+            state (dict): Appended web results to documents and web_search_docs
         """
         question = state[constants.QUESTION]
-        documents = state[constants.DOCUMENTS]
+        documents = state.get(constants.DOCUMENTS, [])
         self.logger.info("Performing web search for question: %s", question)
 
-        response = web_search_tool.invoke({constants.QUERY: question})
-        web_results = "\n".join([res[constants.CONTENT] for res in response])
-        web_results = Document(page_content=web_results)
-        if documents is not None:
-            documents.append(web_results)
-        else:
-            documents = [web_results]
-        return {constants.DOCUMENTS: documents, constants.QUESTION: question}
+        try:
+            response = web_search_tool.invoke(question)
+            self.logger.info("Web search response type: %s", type(response))
+            
+            # TavilySearch returns a string with search results
+            if isinstance(response, str):
+                web_results = Document(page_content=response)
+            elif isinstance(response, list):
+                # If it returns a list, join the content
+                web_results_text = "\n".join([
+                    res.get(constants.CONTENT, str(res)) if isinstance(res, dict) else str(res) 
+                    for res in response
+                ])
+                web_results = Document(page_content=web_results_text)
+            else:
+                web_results = Document(page_content=str(response))
+            
+            # Store web search results separately
+            web_search_docs = [web_results]
+            
+            # Also append to documents for generation
+            if documents is not None and len(documents) > 0:
+                documents.append(web_results)
+            else:
+                documents = [web_results]
+                
+        except Exception as e:
+            self.logger.error("Error during web search: %s", e)
+            # Return empty documents if web search fails
+            documents = documents if documents else []
+            web_search_docs = []
+            
+        return {
+            constants.DOCUMENTS: documents, 
+            constants.QUESTION: question, 
+            constants.WEB_SEARCH: constants.YES,
+            constants.WEB_SEARCH_DOCS: web_search_docs
+        }
     
     def define_workflow(self) -> StateGraph:
         self.logger.info("Defining graph workflow.")

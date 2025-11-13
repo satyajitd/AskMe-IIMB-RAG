@@ -1,6 +1,5 @@
 import time
 from langchain_core.prompts import PromptTemplate
-from langchain_core.messages import HumanMessage
 
 from model.llm import LLM
 from utils import constants
@@ -25,17 +24,17 @@ class GeneratorChain:
         self.llm = LLM()
         self.configure_logging()
 
-    def invoke(self, inputs: dict) -> dict:
+    def invoke(self, inputs: dict) -> str:
         try:
             start_time = time.time()
             prompt_text = GeneratorChain.prompt.format(**inputs)
-            response = self.llm.invoke(HumanMessage(content=prompt_text))
+            response = self.llm.invoke(prompt_text)
             end_time = time.time()
             self.logger.info(f"GeneratorChain invoked in {end_time - start_time:.2f} seconds.")
             return response.content
         except Exception as e:
             self.logger.error(f"Error during GeneratorChain invocation: {e}")
-            return {"error": str(e)}
+            raise
     
     def configure_logging(self):
         self.logger = logging.getLogger(self.__class__.__name__)

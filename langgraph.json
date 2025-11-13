@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "rag_workflow": "./main.py:app"
+  },
+  "env": ".env"
+}

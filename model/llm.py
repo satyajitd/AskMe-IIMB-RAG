@@ -5,6 +5,6 @@ from langchain_ollama.chat_models import ChatOllama
 
 class LLM(ChatOllama):
     def __init__(self):
-        self.model = os.getenv(env.OLLAMA_MODEL)
-        self.base_url = os.getenv(env.OLLAMA_BASE_URL)
-        super().__init__(model=self.model, base_url=self.base_url)
+        model = os.getenv(env.OLLAMA_MODEL)
+        base_url = os.getenv(env.OLLAMA_BASE_URL)
+        super().__init__(model=model, base_url=base_url)

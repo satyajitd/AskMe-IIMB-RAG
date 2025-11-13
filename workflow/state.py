@@ -6,4 +6,5 @@ class State(TypedDict):
     generation : str
     web_search : str
     documents : List[str]
+    web_search_docs : List[str]
     
