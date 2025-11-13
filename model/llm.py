@@ -10,7 +10,7 @@ class LLM(ChatOllama):
         
         # Get max tokens from env or use provided value
         if max_tokens is None:
-            max_tokens = int(os.getenv(env.MAX_OUTPUT_TOKENS, "512"))
+            max_tokens = int(os.getenv(env.MAX_OUTPUT_TOKENS))
         
         super().__init__(
             model=model, 

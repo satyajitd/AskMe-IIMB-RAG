@@ -8,6 +8,7 @@ from tools.search import web_search_tool
 
 import utils.constants as constants
 from workflow.state import State
+from utils import env
 
 from agents.router import RouterChain
 from agents.generator import GeneratorChain
@@ -38,9 +39,7 @@ class Workflow:
 
     def configure_logging(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.log_dir = Path.cwd() / "log"
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = os.getenv("APP_LOG")
+        self.log_file = os.getenv(env.APP_LOG)
 
         # Configure handlers only if not already present to avoid duplicate logs
         if not self.logger.handlers:
@@ -53,7 +52,6 @@ class Workflow:
             try:
                 file_handler = RotatingFileHandler(self.log_file, maxBytes=5 * 1024 * 1024, backupCount=3)
                 file_handler.setFormatter(formatter)
-                file_handler.setLevel(logging.DEBUG)
                 self.logger.addHandler(file_handler)
             except Exception:
                 # If file handler can't be created, log a warning to console

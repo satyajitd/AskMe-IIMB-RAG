@@ -1,41 +1,25 @@
 import os
 import logging
-from pathlib import Path
 from logging.handlers import RotatingFileHandler
+
+from utils import env
 
 import chromadb
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 
 class VectorStore(Chroma):
-    def __init__(self, collection_name: str):
+    def __init__(self):
         # Configure ChromaDB
-        self.collection_name = collection_name
-        self.client = chromadb.HttpClient(host='localhost', port=8000) # Point to your Docker-hosted server
-        self.embedding_function = FastEmbedEmbeddings(model_name="BAAI/bge-base-en-v1.5")
+        self.collection_name = os.getenv(env.CHROMA_COLLECTION_NAME)
+        self.client = chromadb.HttpClient(host=os.getenv(env.CHROMA_SERVER_HOST), port=os.getenv(env.CHROMA_SERVER_PORT)) # Point to your Docker-hosted server
+
         super().__init__(
             client=self.client,
             collection_name=self.collection_name,
-            embedding_function=self.embedding_function,
         )
         # Configure logging
         self.configure_logging()
-
-    def test_connection(self):
-        """Tests the connection to the ChromaDB server."""
-        self.logger.info("Testing connection to ChromaDB...")
-        try:
-            collections = self.client.list_collections()
-            self.logger.info(f"Successfully connected. Found collections: {collections}")
-        except Exception as e:
-            self.logger.error(f"Error connecting to ChromaDB: {e}")
-
-    def store(self, documents) -> list[str]:
-        self.logger.info(f"Creating embeddings for {len(documents)} documents.")
-        embeddings = super().add_documents(documents)
-        self.logger.info("Embeddings created successfully.")
-        return embeddings
     
     def retrieve(self, query: str, n_results: int = 5) -> list[Document]:
         self.logger.info(f"Retrieving top {n_results} documents for the query: {query}")
@@ -45,9 +29,7 @@ class VectorStore(Chroma):
 
     def configure_logging(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.log_dir = Path.cwd() / "log"
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = os.getenv("APP_LOG")
+        self.log_file = os.getenv(env.APP_LOG)
         
         # Configure handlers only if not already present to avoid duplicate logs
         if not self.logger.handlers:
@@ -67,4 +49,4 @@ class VectorStore(Chroma):
                 self.logger.warning("Could not create log file handler at %s", self.log_file)
         self.logger.setLevel(level=logging.INFO)
 
-vector_store = VectorStore(collection_name="iimb-rag-docker")
+vector_store = VectorStore()

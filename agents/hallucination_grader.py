@@ -3,10 +3,9 @@ import time
 from langchain_core.prompts import PromptTemplate
 
 from model.llm import LLM
-from utils import constants
+from utils import constants, env
 
 import logging
-from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
 class HallucinationGraderChain:
@@ -42,9 +41,7 @@ class HallucinationGraderChain:
     
     def configure_logging(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.log_dir = Path.cwd() / "log"
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = os.getenv("APP_LOG")
+        self.log_file = os.getenv(env.APP_LOG)
 
         # Configure handlers only if not already present to avoid duplicate logs
         if not self.logger.handlers:
