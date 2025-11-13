@@ -1,5 +1,5 @@
 import time
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage
 
 from model.llm import LLM

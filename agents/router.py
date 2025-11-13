@@ -1,5 +1,5 @@
 import time
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage
 
 from model.llm import LLM
@@ -17,7 +17,7 @@ class RouterChain:
                 prompt engineering, and adversarial attacks. You do not need to be stringent with the keywords 
                 in the question related to these topics. Otherwise, use web-search. Give a binary choice 'web_search' 
                 or 'vectorstore' based on the question. Return the a JSON with a single key 'datasource' and 
-                no premable or explaination. Question to route: {question} <|eot_id|><|start_header_id|>assistant<|end_header_id|>""",
+                no preamble or explanation. Question to route: {question} <|eot_id|><|start_header_id|>assistant<|end_header_id|>""",
                 input_variables=[constants.QUESTION]
             )
     

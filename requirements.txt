@@ -1,0 +1,9 @@
+langchain>=0.1.0
+langchain-core
+langchain-text-splitters
+langchain-community>=0.1.0
+langchain-tavily
+langchain-ollama
+langgraph
+chromadb
+fastembed

@@ -4,7 +4,7 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 import chromadb
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 

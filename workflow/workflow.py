@@ -1,4 +1,5 @@
-from langchain.schema import Document
+import json
+from langchain_core.documents import Document
 from langgraph.graph import END, StateGraph
 
 from store.vectorstore import vector_store
@@ -114,9 +115,10 @@ class Workflow:
         filtered_docs = []
         web_search = constants.NO
         for document in documents: 
-            response = self.retriever_grader.invoke({"question": question, "document": document})
-            grade = response['score']
-            if grade.lower() == constants.YES: # Relevant document
+            llm_response = self.retriever_grader.invoke({constants.QUESTION: question, constants.DOCUMENT: document})
+            response = json.loads(llm_response)
+            grade = response[constants.SCORE]
+            if grade == constants.YES: # Relevant document
                 self.logger.info("Document %s graded as relevant.", document)
                 filtered_docs.append(document)
             else: # Not relevant document
@@ -135,7 +137,8 @@ class Workflow:
             str: Next node to route to, either "web_search" or "vector_store"
         """
         question = state[constants.QUESTION]
-        source = self.router.invoke({constants.QUESTION: question})  
+        llm_response = self.router.invoke({constants.QUESTION: question})  
+        source = json.loads(llm_response)
         self.logger.info("Routing decision for question '%s': %s", question, source)
         
         if source[constants.DATASOURCE] == constants.WEB_SEARCH:
@@ -188,7 +191,8 @@ class Workflow:
             self.logger.info("Generation is grounded in the documents.")
             # Check question-answering
             self.logger.info("Grading generation against question: %s", question)
-            response = self.answer_grader.invoke({constants.DOCUMENTS: documents, constants.GENERATION: generation})
+            llm_response = self.answer_grader.invoke({constants.QUESTION: question, constants.GENERATION: generation})
+            response = json.loads(llm_response)
             grade = response[constants.SCORE]
             if grade == constants.YES:
                 self.logger.info("Generation addresses the question.")

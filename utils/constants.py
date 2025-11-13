@@ -1,6 +1,6 @@
 WEB_SEARCH = "web_search"
 RETRIEVE = "retrieve"
-GRADE_DOCUMENTS = "grade_documents"
+DOCUMENT = "document"
 GENERATE = "generate"
 NOT_USEFUL = "not useful"
 USEFUL = "useful"
