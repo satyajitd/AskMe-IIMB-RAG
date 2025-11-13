@@ -10,3 +10,4 @@ fastembed
 langsmith
 python-dotenv
 langgraph-cli[inmem]
+requests
