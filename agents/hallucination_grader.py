@@ -6,7 +6,6 @@ from utils import constants
 
 import logging
 from pathlib import Path
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 class HallucinationGraderChain:
@@ -34,6 +33,7 @@ class HallucinationGraderChain:
             response = self.llm.invoke(prompt_text)
             end_time = time.time()
             self.logger.info(f"HallucinationGraderChain invoked in {end_time - start_time:.2f} seconds.")
+            self.logger.info(f"Grounding decision for generation '{inputs.get(constants.GENERATION)}' with documents {inputs.get(constants.DOCUMENTS)}: {response.content}")
             return response.content
         except Exception as e:
             self.logger.error(f"Error during HallucinationGraderChain invocation: {e}")
@@ -43,7 +43,7 @@ class HallucinationGraderChain:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.log_dir = Path.cwd() / "log"
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = self.log_dir / f"hallucination_grader_{datetime.now().timestamp()}.log"
+        self.log_file = self.log_dir / f"hallucination_grader.log"
 
         # Configure handlers only if not already present to avoid duplicate logs
         if not self.logger.handlers:

@@ -6,16 +6,19 @@ from utils import constants
 
 import logging
 from pathlib import Path
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 class RouterChain:
     prompt = PromptTemplate(
                 template="""<|begin_of_text|><|start_header_id|>system<|end_header_id|> You are an expert at routing a 
-                user question to a vectorstore or web search. Use the vectorstore for questions on LLM agents, 
-                prompt engineering, and adversarial attacks. You do not need to be stringent with the keywords 
-                in the question related to these topics. Otherwise, use web-search. Give a binary choice 'web_search' 
-                or 'vectorstore' based on the question. Return the a JSON with a single key 'datasource' and 
+                user question to a vectorstore or marking it as off-topic. Use the vectorstore ONLY for questions related to IIM Bangalore, 
+                including faculties, student policies, course outlines, library resources, campus facilities, admissions, 
+                programs, research, and any other IIM Bangalore-specific information. 
+                
+                For questions NOT related to IIM Bangalore (such as general knowledge, other institutions, technical concepts like 
+                prompt engineering, LLMs, or any other topics), return 'off_topic'. 
+                
+                Give a binary choice 'vectorstore' or 'off_topic' based on the question. Return a JSON with a single key 'datasource' and 
                 no preamble or explanation. Question to route: {question} <|eot_id|><|start_header_id|>assistant<|end_header_id|>""",
                 input_variables=[constants.QUESTION]
             )
@@ -31,6 +34,7 @@ class RouterChain:
             response = self.llm.invoke(prompt_text)
             end_time = time.time()
             self.logger.info(f"RouterChain invoked in {end_time - start_time:.2f} seconds.")
+            self.logger.info(f"Routing decision for {inputs.get(constants.QUESTION)}: {response.content}")
             return response.content
         except Exception as e:
             self.logger.error(f"Error during RouterChain invocation: {e}")
@@ -40,7 +44,7 @@ class RouterChain:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.log_dir = Path.cwd() / "log"
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = self.log_dir / f"router_{datetime.now().timestamp()}.log"
+        self.log_file = self.log_dir / f"router.log"
 
         # Configure handlers only if not already present to avoid duplicate logs
         if not self.logger.handlers:

@@ -1,6 +1,7 @@
 WEB_SEARCH="web_search"
 RETRIEVE="retrieve"
 DOCUMENT="document"
+OFF_TOPIC="off_topic"
 GENERATE="generate"
 NOT_USEFUL="not useful"
 USEFUL="useful"
