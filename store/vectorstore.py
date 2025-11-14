@@ -7,16 +7,18 @@ from utils import env
 import chromadb
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 
 class VectorStore(Chroma):
     def __init__(self):
         # Configure ChromaDB
         self.collection_name = os.getenv(env.CHROMA_COLLECTION_NAME)
         self.client = chromadb.HttpClient(host=os.getenv(env.CHROMA_SERVER_HOST), port=os.getenv(env.CHROMA_SERVER_PORT)) # Point to your Docker-hosted server
-
+        self.embedding_function = FastEmbedEmbeddings(model_name="BAAI/bge-base-en-v1.5")
         super().__init__(
             client=self.client,
             collection_name=self.collection_name,
+            embedding_function=self.embedding_function
         )
         # Configure logging
         self.configure_logging()
