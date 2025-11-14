@@ -14,7 +14,7 @@ services:
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       # Ollama Configuration
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3:8b-instruct-q4_K_M}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://0.0.0.0:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       # Model Configuration
       - MAX_OUTPUT_TOKENS=${MAX_OUTPUT_TOKENS:-512}
       # LangSmith Tracing

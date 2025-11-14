@@ -35,7 +35,7 @@ EXPOSE 8123
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8123/health || exit 1
+    CMD curl -f http://localhost:8123/ok || exit 1
 
 # Run the LangGraph application
 CMD ["langgraph", "dev", "--host", "0.0.0.0", "--port", "8123"]
