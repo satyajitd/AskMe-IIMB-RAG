@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from langchain_core.documents import Document
 from langgraph.graph import END, StateGraph
 
@@ -12,7 +13,6 @@ from utils import env
 
 from agents.router import RouterChain
 from agents.generator import GeneratorChain
-from agents.retrieval_grader import RetrievalGraderChain
 from agents.hallucination_grader import HallucinationGraderChain
 
 import logging
@@ -20,12 +20,79 @@ from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
 class Workflow:
-    def __init__(self):
+    @staticmethod
+    def extract_json_from_response(response: str) -> str:
+        """
+        Extract JSON from LLM response that may be wrapped in markdown code blocks.
+        Handles cases where LLM adds extra text after the JSON.
+        
+        Args:
+            response: Raw LLM response string
+            
+        Returns:
+            Cleaned JSON string
+        """
+        if not response:
+            return response
+        
+        # Try to match complete markdown code blocks: ```json ... ```
+        # Use non-greedy match and stop at first closing backticks
+        pattern = r'```(?:json)?\s*\n?(.*?)\n?```'
+        match = re.search(pattern, response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        
+        # Handle incomplete code blocks (missing closing backticks): ```json ... (no closing)
+        # This happens when LLM output is truncated or malformed
+        incomplete_pattern = r'```(?:json)?\s*\n(.*?)$'
+        incomplete_match = re.search(incomplete_pattern, response, re.DOTALL)
+        if incomplete_match:
+            # Extract content after opening backticks
+            content = incomplete_match.group(1).strip()
+            # Remove any trailing backticks that might be partial
+            content = re.sub(r'`+$', '', content).strip()
+            return content
+        
+        # Try to extract just the JSON object/array using braces
+        # This handles cases where JSON is embedded in other text
+        json_pattern = r'(\{.*?\}|\[.*?\])'
+        json_match = re.search(json_pattern, response, re.DOTALL)
+        if json_match:
+            return json_match.group(1).strip()
+        
+        # Return original if no code blocks or JSON found
+        return response.strip()
+    
+    @staticmethod
+    def normalize_score(score_value) -> str:
+        """
+        Normalize score value to lowercase string 'yes' or 'no'.
+        Handles int (0/1), string ('yes'/'no'), and other variations.
+        
+        Args:
+            score_value: Score from LLM (can be int, str, or other)
+            
+        Returns:
+            Normalized score as 'yes' or 'no'
+        """
+        if isinstance(score_value, int):
+            return constants.YES if score_value == 1 else constants.NO
+        elif isinstance(score_value, str):
+            score_lower = score_value.lower().strip()
+            # Handle variations: 'yes', 'no', '1', '0', 'true', 'false'
+            if score_lower in ['yes', '1', 'true']:
+                return constants.YES
+            elif score_lower in ['no', '0', 'false']:
+                return constants.NO
+            return score_lower
+        else:
+            # Default to yes for unexpected types
+            return constants.YES
 
+    def __init__(self):
         # Initialize RAG components
         self.router = RouterChain()
         self.generator = GeneratorChain()
-        self.retriever_grader = RetrievalGraderChain()
         self.hallucination_grader = HallucinationGraderChain()
         
         # Initialize vector store
@@ -95,51 +162,6 @@ class Workflow:
             self.logger.error("Error generating answer: %s", e)
             return {constants.DOCUMENTS: documents, constants.QUESTION: question, constants.GENERATION: ""}
 
-    def grade_documents(self, state: State) -> dict:
-        """
-        Grade retrieved documents for relevance to the question.
-        Args:
-            state (dict): The current graph state.
-        Returns:
-            state (dict): Filtered documents and web search flag.
-        """
-        question = state[constants.QUESTION]
-        documents = state[constants.DOCUMENTS]
-        self.logger.info("Grading %d documents for question: %s", len(documents), question)
-
-        # Score each retrieved document
-        filtered_docs = []
-        web_search = constants.NO
-        for document in documents: 
-            try:
-                llm_response = self.retriever_grader.invoke({constants.QUESTION: question, constants.DOCUMENT: document})
-                self.logger.info("Raw retrieval grader response: '%s'", llm_response)
-                
-                # Handle empty or whitespace-only responses
-                if not llm_response or not llm_response.strip():
-                    self.logger.warning("Empty response from retrieval grader, assuming relevant.")
-                    filtered_docs.append(document)
-                    continue
-                
-                response = json.loads(llm_response.strip())
-                grade = response.get(constants.SCORE, constants.YES).lower()
-                
-                if grade == constants.YES: # Relevant document
-                    self.logger.info("Document %s graded as relevant.", document)
-                    filtered_docs.append(document)
-                else: # Not relevant document
-                    self.logger.info("Document %s graded as not relevant.", document)
-                    web_search = constants.YES
-            except json.JSONDecodeError as e:
-                self.logger.error("Failed to parse JSON from retrieval grader: %s. Response was: '%s'. Assuming relevant.", e, llm_response)
-                # Default to keeping the document if we can't parse the response
-                filtered_docs.append(document)
-            except Exception as e:
-                self.logger.error("Error grading document: %s. Assuming relevant.", e)
-                filtered_docs.append(document)
-        
-        return {constants.DOCUMENTS: filtered_docs, constants.QUESTION: question, constants.WEB_SEARCH: web_search}
-    
     # Methods representing decision nodes
     def route_question(self, state: State) -> str:
         """
@@ -159,7 +181,9 @@ class Workflow:
                 self.logger.warning("Empty response from router, defaulting to vectorstore.")
                 return constants.VECTOR_STORE
             
-            source = json.loads(llm_response.strip())
+            # Extract JSON from markdown code blocks if present
+            cleaned_response = self.extract_json_from_response(llm_response)
+            source = json.loads(cleaned_response)
         except json.JSONDecodeError as e:
             self.logger.error("Failed to parse router response as JSON: %s. Response: '%s'", e, llm_response)
             # Default to vectorstore on parse error
@@ -181,27 +205,23 @@ class Workflow:
 
     def decide_to_generate(self, state: State) -> str:
         """
-        Decide whether to generate an answer or perform a web search based on graded documents.
+        Decide whether to generate an answer or perform a web search.
+        Only perform web search if no documents were retrieved.
         Args:
             state (dict): The current graph state.
         Returns:
             str: Next node to route to, either "generate" or "websearch"
         """
         question = state[constants.QUESTION]
-        web_search = state[constants.WEB_SEARCH]
         documents = state[constants.DOCUMENTS]
-        self.logger.info("Deciding next step for question '%s' with %d relevant documents.", question, len(documents))
+        self.logger.info("Deciding next step for question '%s' with %d documents.", question, len(documents))
 
         if len(documents) == 0:
-            # No relevant documents found, perform web search
-            self.logger.info("Decision: No documents available, perform web search.")
-            return constants.WEB_SEARCH
-        elif web_search == constants.YES:
-            # Documents were filtered out as irrelevant
-            self.logger.info("Decision: Documents filtered as irrelevant, perform web search.")
+            # No documents retrieved, perform web search as fallback
+            self.logger.info("Decision: No documents retrieved, perform web search.")
             return constants.WEB_SEARCH
         else:
-            # We have relevant documents, so generate answer
+            # We have documents, generate answer (hallucination grader will verify quality)
             self.logger.info("Decision: Generate answer with %d documents.", len(documents))
             return constants.GENERATE
 
@@ -228,8 +248,10 @@ class Workflow:
                 self.logger.warning("Empty response from hallucination grader, assuming supported.")
                 return constants.SUPPORTED
             
-            response = json.loads(llm_response.strip())
-            grade = response.get(constants.SCORE, constants.YES).lower()
+            # Extract JSON from markdown code blocks if present
+            cleaned_response = self.extract_json_from_response(llm_response)
+            response = json.loads(cleaned_response)
+            grade = self.normalize_score(response.get(constants.SCORE, constants.YES))
             
             if grade == constants.YES:
                 self.logger.info("Generation is grounded in the documents.")
@@ -328,7 +350,6 @@ class Workflow:
         self.workflow.add_node(constants.OFF_TOPIC, self.handle_off_topic)
         self.workflow.add_node(constants.WEB_SEARCH, self.web_search)
         self.workflow.add_node(constants.RETRIEVE, self.retrieve)
-        self.workflow.add_node(constants.GRADE_DOCUMENTS, self.grade_documents)
         self.workflow.add_node(constants.GENERATE, self.generate)
 
         self.workflow.set_conditional_entry_point(
@@ -341,9 +362,9 @@ class Workflow:
 
         self.workflow.add_edge(constants.OFF_TOPIC, END)
 
-        self.workflow.add_edge(constants.RETRIEVE, constants.GRADE_DOCUMENTS)
+        # Go directly from retrieve to decide_to_generate (skip grading)
         self.workflow.add_conditional_edges(
-            constants.GRADE_DOCUMENTS,
+            constants.RETRIEVE,
             self.decide_to_generate,
             {
                 constants.WEB_SEARCH: constants.WEB_SEARCH,
