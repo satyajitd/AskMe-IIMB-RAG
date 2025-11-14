@@ -111,15 +111,32 @@ class Workflow:
         filtered_docs = []
         web_search = constants.NO
         for document in documents: 
-            llm_response = self.retriever_grader.invoke({constants.QUESTION: question, constants.DOCUMENT: document})
-            response = json.loads(llm_response)
-            grade = response[constants.SCORE]
-            if grade == constants.YES: # Relevant document
-                self.logger.info("Document %s graded as relevant.", document)
+            try:
+                llm_response = self.retriever_grader.invoke({constants.QUESTION: question, constants.DOCUMENT: document})
+                self.logger.info("Raw retrieval grader response: '%s'", llm_response)
+                
+                # Handle empty or whitespace-only responses
+                if not llm_response or not llm_response.strip():
+                    self.logger.warning("Empty response from retrieval grader, assuming relevant.")
+                    filtered_docs.append(document)
+                    continue
+                
+                response = json.loads(llm_response.strip())
+                grade = response.get(constants.SCORE, constants.YES).lower()
+                
+                if grade == constants.YES: # Relevant document
+                    self.logger.info("Document %s graded as relevant.", document)
+                    filtered_docs.append(document)
+                else: # Not relevant document
+                    self.logger.info("Document %s graded as not relevant.", document)
+                    web_search = constants.YES
+            except json.JSONDecodeError as e:
+                self.logger.error("Failed to parse JSON from retrieval grader: %s. Response was: '%s'. Assuming relevant.", e, llm_response)
+                # Default to keeping the document if we can't parse the response
                 filtered_docs.append(document)
-            else: # Not relevant document
-                self.logger.info("Document %s graded as not relevant.", document)
-                web_search = constants.YES
+            except Exception as e:
+                self.logger.error("Error grading document: %s. Assuming relevant.", e)
+                filtered_docs.append(document)
         
         return {constants.DOCUMENTS: filtered_docs, constants.QUESTION: question, constants.WEB_SEARCH: web_search}
     
@@ -134,12 +151,17 @@ class Workflow:
         """
         question = state[constants.QUESTION]
         llm_response = self.router.invoke({constants.QUESTION: question})
-        self.logger.info("Raw router response: %s", llm_response)
+        self.logger.info("Raw router response: '%s'", llm_response)
         
         try:
-            source = json.loads(llm_response)
+            # Handle empty or whitespace-only responses
+            if not llm_response or not llm_response.strip():
+                self.logger.warning("Empty response from router, defaulting to vectorstore.")
+                return constants.VECTOR_STORE
+            
+            source = json.loads(llm_response.strip())
         except json.JSONDecodeError as e:
-            self.logger.error("Failed to parse router response as JSON: %s. Response: %s", e, llm_response)
+            self.logger.error("Failed to parse router response as JSON: %s. Response: '%s'", e, llm_response)
             # Default to vectorstore on parse error
             return constants.VECTOR_STORE
         
@@ -197,15 +219,31 @@ class Workflow:
         self.logger.info("Grading generation for hallucinations for question: %s", question)
 
         # Check hallucination
-        llm_response = self.hallucination_grader.invoke({constants.DOCUMENTS: documents, constants.GENERATION: generation})
-        response = json.loads(llm_response)
-        grade = response[constants.SCORE]
-        if grade == constants.YES:
-            self.logger.info("Generation is grounded in the documents.")
+        try:
+            llm_response = self.hallucination_grader.invoke({constants.DOCUMENTS: documents, constants.GENERATION: generation})
+            self.logger.info("Raw hallucination grader response: '%s'", llm_response)
+            
+            # Handle empty or whitespace-only responses
+            if not llm_response or not llm_response.strip():
+                self.logger.warning("Empty response from hallucination grader, assuming supported.")
+                return constants.SUPPORTED
+            
+            response = json.loads(llm_response.strip())
+            grade = response.get(constants.SCORE, constants.YES).lower()
+            
+            if grade == constants.YES:
+                self.logger.info("Generation is grounded in the documents.")
+                return constants.SUPPORTED
+            else:
+                self.logger.info("Generation is not grounded in the documents, regenerating.")
+                return constants.NOT_SUPPORTED
+        except json.JSONDecodeError as e:
+            self.logger.error("Failed to parse JSON from hallucination grader: %s. Response was: '%s'. Assuming supported.", e, llm_response)
+            # Default to supported if we can't parse
             return constants.SUPPORTED
-        else:
-            self.logger.info("Generation is not grounded in the documents, regenerating.")
-            return constants.NOT_SUPPORTED
+        except Exception as e:
+            self.logger.error("Error grading generation: %s. Assuming supported.", e)
+            return constants.SUPPORTED
 
     def handle_off_topic(self, state: State) -> dict:
         """
