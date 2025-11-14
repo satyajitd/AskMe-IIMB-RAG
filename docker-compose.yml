@@ -1,6 +1,6 @@
 services:
   # LangGraph RAG application
-  rag-app:
+  rag:
     build:
       context: .
       dockerfile: Dockerfile
