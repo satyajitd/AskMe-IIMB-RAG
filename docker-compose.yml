@@ -33,7 +33,7 @@ services:
       - CHROMA_SERVER_HOST=${CHROMA_SERVER_HOST:-chromadb}
       - CHROMA_SERVER_PORT=${CHROMA_SERVER_PORT:-8000}
       - CHROMA_COLLECTION_NAME=${CHROMA_COLLECTION_NAME:-iimb-rag}
-      - CHROMA_N_RESULTS=${CHROMA_N_RESULTS:-3}
+      - CHROMA_N_RESULTS=${CHROMA_N_RESULTS:-10}
       # Application Logging
       - APP_LOG=/app/log/rag_app.log
     networks:

@@ -1,15 +1,20 @@
-langchain>=0.1.0
+# LangChain core
 langchain-core
-langchain-text-splitters
-langchain-community>=0.1.0
-langchain-tavily
 langchain-ollama
 langchain-google-genai
+langchain-tavily
+
+# LangGraph workflow
 langgraph
-chromadb
-fastembed
-langsmith
-python-dotenv
 langgraph-cli[inmem]
-requests
-langchain-chroma
+
+# LlamaIndex for vector store
+llama-index-core
+llama-index-vector-stores-chroma
+llama-index-embeddings-fastembed
+
+# Vector database
+chromadb
+
+# Embeddings
+fastembed
