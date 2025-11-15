@@ -1,7 +1,7 @@
-import os
-import json
-import re
+from typing import Optional
+
 from langchain_core.documents import Document
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
 from store.vectorstore import vector_store
@@ -9,122 +9,39 @@ from tools.search import web_search_tool
 
 import utils.constants as constants
 from workflow.state import State
-from utils import env
 
 from agents.router import RouterChain
 from agents.generator import GeneratorChain
 from agents.hallucination_grader import HallucinationGraderChain
 
-import logging
-from pathlib import Path
-from logging.handlers import RotatingFileHandler
+from utils.logger import configure_logger
 
 class Workflow:
-    @staticmethod
-    def extract_json_from_response(response: str) -> str:
-        """
-        Extract JSON from LLM response that may be wrapped in markdown code blocks.
-        Handles cases where LLM adds extra text after the JSON.
-        
-        Args:
-            response: Raw LLM response string
-            
-        Returns:
-            Cleaned JSON string
-        """
-        if not response:
-            return response
-        
-        # Try to match complete markdown code blocks: ```json ... ```
-        # Use non-greedy match and stop at first closing backticks
-        pattern = r'```(?:json)?\s*\n?(.*?)\n?```'
-        match = re.search(pattern, response, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        
-        # Handle incomplete code blocks (missing closing backticks): ```json ... (no closing)
-        # This happens when LLM output is truncated or malformed
-        incomplete_pattern = r'```(?:json)?\s*\n(.*?)$'
-        incomplete_match = re.search(incomplete_pattern, response, re.DOTALL)
-        if incomplete_match:
-            # Extract content after opening backticks
-            content = incomplete_match.group(1).strip()
-            # Remove any trailing backticks that might be partial
-            content = re.sub(r'`+$', '', content).strip()
-            return content
-        
-        # Try to extract just the JSON object/array using braces
-        # This handles cases where JSON is embedded in other text
-        json_pattern = r'(\{.*?\}|\[.*?\])'
-        json_match = re.search(json_pattern, response, re.DOTALL)
-        if json_match:
-            return json_match.group(1).strip()
-        
-        # Return original if no code blocks or JSON found
-        return response.strip()
-    
-    @staticmethod
-    def normalize_score(score_value) -> str:
-        """
-        Normalize score value to lowercase string 'yes' or 'no'.
-        Handles int (0/1), string ('yes'/'no'), and other variations.
-        
-        Args:
-            score_value: Score from LLM (can be int, str, or other)
-            
-        Returns:
-            Normalized score as 'yes' or 'no'
-        """
-        if isinstance(score_value, int):
-            return constants.YES if score_value == 1 else constants.NO
-        elif isinstance(score_value, str):
-            score_lower = score_value.lower().strip()
-            # Handle variations: 'yes', 'no', '1', '0', 'true', 'false'
-            if score_lower in ['yes', '1', 'true']:
-                return constants.YES
-            elif score_lower in ['no', '0', 'false']:
-                return constants.NO
-            return score_lower
-        else:
-            # Default to yes for unexpected types
-            return constants.YES
 
-    def __init__(self):
-        # Initialize RAG components
-        self.router = RouterChain()
-        self.generator = GeneratorChain()
-        self.hallucination_grader = HallucinationGraderChain()
-        
+    def __init__(
+        self,
+        router: Optional[RouterChain] = None,
+        generator: Optional[GeneratorChain] = None,
+        hallucination_grader: Optional[HallucinationGraderChain] = None,
+        vector_store_instance=None,
+        checkpointer: Optional[BaseCheckpointSaver] = None,
+    ):
+        # Initialize RAG components (allow dependency injection for testing)
+        self.router = router or RouterChain()
+        self.generator = generator or GeneratorChain()
+        self.hallucination_grader = hallucination_grader or HallucinationGraderChain()
+
         # Initialize vector store
-        self.vector_store = vector_store
-
-        # Initialize workflow
-        self.workflow = StateGraph(State)
+        self.vector_store = vector_store_instance or vector_store
 
         # Configure logging
         self.configure_logging()
 
-    def configure_logging(self):
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.log_file = os.getenv(env.APP_LOG)
+        # Compile LangGraph once for reuse
+        self.graph = self._build_graph(checkpointer)
 
-        # Configure handlers only if not already present to avoid duplicate logs
-        if not self.logger.handlers:
-            formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-            # Stream handler (console)
-            stream_handler = logging.StreamHandler()
-            stream_handler.setFormatter(formatter)
-            self.logger.addHandler(stream_handler)
-            # Optional file handler
-            try:
-                file_handler = RotatingFileHandler(self.log_file, maxBytes=5 * 1024 * 1024, backupCount=3)
-                file_handler.setFormatter(formatter)
-                self.logger.addHandler(file_handler)
-            except Exception:
-                # If file handler can't be created, log a warning to console
-                stream_handler.setLevel(logging.WARNING)
-                self.logger.warning("Could not create log file handler at %s", self.log_file)
-        self.logger.setLevel(level=logging.INFO)
+    def configure_logging(self):
+        self.logger = configure_logger(self.__class__.__name__)
 
     # Methods representing graph nodes
     def retrieve(self, state: State) -> dict:
@@ -172,36 +89,18 @@ class Workflow:
             str: Next node to route to, either "off_topic" or "vector_store"
         """
         question = state[constants.QUESTION]
-        llm_response = self.router.invoke({constants.QUESTION: question})
-        self.logger.info("Raw router response: '%s'", llm_response)
-        
-        try:
-            # Handle empty or whitespace-only responses
-            if not llm_response or not llm_response.strip():
-                self.logger.warning("Empty response from router, defaulting to vectorstore.")
-                return constants.VECTOR_STORE
-            
-            # Extract JSON from markdown code blocks if present
-            cleaned_response = self.extract_json_from_response(llm_response)
-            source = json.loads(cleaned_response)
-        except json.JSONDecodeError as e:
-            self.logger.error("Failed to parse router response as JSON: %s. Response: '%s'", e, llm_response)
-            # Default to vectorstore on parse error
-            return constants.VECTOR_STORE
-        
-        self.logger.info("Routing decision for question '%s': %s", question, source)
-        
-        datasource = source.get(constants.DATASOURCE, "").lower()
-        if datasource == constants.OFF_TOPIC or datasource == "off_topic":
-            self.logger.info("Question is off-topic, not related to IIM Bangalore.")
+        decision = (self.router.invoke({constants.QUESTION: question}) or constants.VECTOR_STORE).strip().lower()
+
+        if decision == constants.OFF_TOPIC:
+            self.logger.info("Router marked question as off-topic.")
             return constants.OFF_TOPIC
-        elif datasource == constants.VECTOR_STORE or datasource == "vectorstore":
-            self.logger.info("Routing to RAG.")
-            return constants.VECTOR_STORE
+
+        if decision != constants.VECTOR_STORE:
+            self.logger.warning("Unexpected router decision '%s', defaulting to vector_store", decision)
         else:
-            # Default to vectorstore if response is unexpected
-            self.logger.warning("Unexpected datasource '%s', defaulting to vectorstore.", datasource)
-            return constants.VECTOR_STORE
+            self.logger.info("Routing question '%s' to vector store", question)
+
+        return constants.VECTOR_STORE
 
     def decide_to_generate(self, state: State) -> str:
         """
@@ -240,32 +139,17 @@ class Workflow:
 
         # Check hallucination
         try:
-            llm_response = self.hallucination_grader.invoke({constants.DOCUMENTS: documents, constants.GENERATION: generation})
-            self.logger.info("Raw hallucination grader response: '%s'", llm_response)
-            
-            # Handle empty or whitespace-only responses
-            if not llm_response or not llm_response.strip():
-                self.logger.warning("Empty response from hallucination grader, assuming supported.")
-                return constants.SUPPORTED
-            
-            # Extract JSON from markdown code blocks if present
-            cleaned_response = self.extract_json_from_response(llm_response)
-            response = json.loads(cleaned_response)
-            grade = self.normalize_score(response.get(constants.SCORE, constants.YES))
-            
-            if grade == constants.YES:
-                self.logger.info("Generation is grounded in the documents.")
-                return constants.SUPPORTED
-            else:
-                self.logger.info("Generation is not grounded in the documents, regenerating.")
-                return constants.NOT_SUPPORTED
-        except json.JSONDecodeError as e:
-            self.logger.error("Failed to parse JSON from hallucination grader: %s. Response was: '%s'. Assuming supported.", e, llm_response)
-            # Default to supported if we can't parse
+            grade = self.hallucination_grader.invoke({constants.DOCUMENTS: documents, constants.GENERATION: generation})
+        except Exception:
+            self.logger.warning("Hallucination grader failed, assuming supported.")
             return constants.SUPPORTED
-        except Exception as e:
-            self.logger.error("Error grading generation: %s. Assuming supported.", e)
+
+        if not grade or grade.strip().lower() != constants.NO:
+            self.logger.info("Generation is grounded in the documents.")
             return constants.SUPPORTED
+
+        self.logger.info("Generation is not grounded in the documents, regenerating.")
+        return constants.NOT_SUPPORTED
 
     def handle_off_topic(self, state: State) -> dict:
         """
@@ -304,6 +188,7 @@ class Workflow:
         """
         question = state[constants.QUESTION]
         documents = state.get(constants.DOCUMENTS, [])
+        documents_copy = list(documents) if documents else []
         self.logger.info("Performing web search for question: %s", question)
 
         try:
@@ -325,34 +210,31 @@ class Workflow:
             
             # Store web search results separately
             web_search_docs = [web_results]
-            
+
             # Also append to documents for generation
-            if documents is not None and len(documents) > 0:
-                documents.append(web_results)
-            else:
-                documents = [web_results]
+            documents_copy.append(web_results)
                 
         except Exception as e:
             self.logger.error("Error during web search: %s", e)
             # Return empty documents if web search fails
-            documents = documents if documents else []
             web_search_docs = []
             
         return {
-            constants.DOCUMENTS: documents, 
+            constants.DOCUMENTS: documents_copy, 
             constants.QUESTION: question, 
             constants.WEB_SEARCH: constants.YES,
             constants.WEB_SEARCH_DOCS: web_search_docs
         }
     
-    def define_workflow(self) -> StateGraph:
-        self.logger.info("Defining graph workflow.")
-        self.workflow.add_node(constants.OFF_TOPIC, self.handle_off_topic)
-        self.workflow.add_node(constants.WEB_SEARCH, self.web_search)
-        self.workflow.add_node(constants.RETRIEVE, self.retrieve)
-        self.workflow.add_node(constants.GENERATE, self.generate)
+    def _build_graph(self, checkpointer: Optional[BaseCheckpointSaver]) -> StateGraph:
+        self.logger.info("Compiling graph workflow.")
+        graph = StateGraph(State)
+        graph.add_node(constants.OFF_TOPIC, self.handle_off_topic)
+        graph.add_node(constants.WEB_SEARCH, self.web_search)
+        graph.add_node(constants.RETRIEVE, self.retrieve)
+        graph.add_node(constants.GENERATE, self.generate)
 
-        self.workflow.set_conditional_entry_point(
+        graph.set_conditional_entry_point(
             self.route_question,
             {
                 constants.OFF_TOPIC: constants.OFF_TOPIC,
@@ -360,10 +242,10 @@ class Workflow:
             },
         )
 
-        self.workflow.add_edge(constants.OFF_TOPIC, END)
+        graph.add_edge(constants.OFF_TOPIC, END)
 
         # Go directly from retrieve to decide_to_generate (skip grading)
-        self.workflow.add_conditional_edges(
+        graph.add_conditional_edges(
             constants.RETRIEVE,
             self.decide_to_generate,
             {
@@ -372,8 +254,8 @@ class Workflow:
             },
         )
     
-        self.workflow.add_edge(constants.WEB_SEARCH, constants.GENERATE)
-        self.workflow.add_conditional_edges(
+        graph.add_edge(constants.WEB_SEARCH, constants.GENERATE)
+        graph.add_conditional_edges(
             constants.GENERATE,
             self.grade_generation,
             {
@@ -383,4 +265,7 @@ class Workflow:
         )
         self.logger.info("Graph workflow defined successfully.")
 
-        return self.workflow.compile()
+        if checkpointer is not None:
+            return graph.compile(checkpointer=checkpointer)
+        return graph.compile()
+

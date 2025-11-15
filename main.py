@@ -1,9 +1,8 @@
-from dotenv import load_dotenv
 from workflow.workflow import Workflow
 
-# Load environment variables
-load_dotenv()
+# Create and expose the compiled graph once (for langgraph dev)
+workflow = Workflow()
+graph = workflow.graph
 
-# Create the workflow app
-app = Workflow().define_workflow()
+__all__ = ["workflow", "graph"]
 

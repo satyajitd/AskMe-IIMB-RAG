@@ -4,6 +4,7 @@ langchain-text-splitters
 langchain-community>=0.1.0
 langchain-tavily
 langchain-ollama
+langchain-google-genai
 langgraph
 chromadb
 fastembed
@@ -11,3 +12,4 @@ langsmith
 python-dotenv
 langgraph-cli[inmem]
 requests
+langchain-chroma

@@ -1,62 +1,79 @@
-import os
 import time
-from langchain_core.prompts import PromptTemplate
+from typing import Any, Dict, Iterable
 
-from model.llm import LLM
-from utils import constants, env
+from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
 
-import logging
-from logging.handlers import RotatingFileHandler
+from agents.base_agent import BaseAgent
+from utils import constants
 
-class HallucinationGraderChain:
-    prompt = PromptTemplate(
-                template=""" <|begin_of_text|><|start_header_id|>system<|end_header_id|> You are a grader assessing whether 
-                an answer is grounded in / supported by a set of facts. Give a binary 'yes' or 'no' score to indicate 
-                whether the answer is grounded in / supported by a set of facts. Provide the binary score as a JSON with a 
-                single key 'score' and no preamble or explanation. <|eot_id|><|start_header_id|>user<|end_header_id|>
-                Here are the facts:
-                \n ------- \n
-                {documents} 
-                \n ------- \n
-                Here is the answer: {generation}  <|eot_id|><|start_header_id|>assistant<|end_header_id|>""",
-                input_variables=[constants.GENERATION, constants.DOCUMENTS]
-            )
-    
-    def __init__(self):
-        self.llm = LLM()
-        self.configure_logging()
 
-    def invoke(self, inputs: dict) -> str:
+class HallucinationScore(BaseModel):
+    score: str = Field(description="'yes' if grounded, 'no' otherwise")
+
+
+class HallucinationGraderChain(BaseAgent):
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """You check whether the provided answer is grounded in the supplied facts.
+                Respond with JSON containing key 'score' and value 'yes' if the answer is supported,
+                otherwise 'no'.""",
+            ),
+            (
+                "human",
+                "Facts:\n{documents}\n\nAnswer:\n{generation}",
+            ),
+        ]
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def invoke(self, inputs: Dict[str, Any]) -> str:
+        start_time = time.perf_counter()
+        documents = self._format_documents(inputs.get(constants.DOCUMENTS))
+        generation = inputs.get(constants.GENERATION, "")
+
+        llm_with_schema = self.llm.with_structured_output(HallucinationScore)
+
         try:
-            start_time = time.time()
-            prompt_text = HallucinationGraderChain.prompt.format(**inputs)
-            response = self.llm.invoke(prompt_text)
-            end_time = time.time()
-            self.logger.info(f"HallucinationGraderChain invoked in {end_time - start_time:.2f} seconds.")
-            self.logger.info(f"Grounding decision for generation '{inputs.get(constants.GENERATION)}' with documents {inputs.get(constants.DOCUMENTS)}: {response.content}")
-            return response.content
-        except Exception as e:
-            self.logger.error(f"Error during HallucinationGraderChain invocation: {e}")
-            raise
-    
-    def configure_logging(self):
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.log_file = os.getenv(env.APP_LOG)
+            prompt_value = HallucinationGraderChain.prompt.invoke(
+                {constants.DOCUMENTS: documents, constants.GENERATION: generation}
+            )
+            result = llm_with_schema.invoke(prompt_value)
+            latency = time.perf_counter() - start_time
 
-        # Configure handlers only if not already present to avoid duplicate logs
-        if not self.logger.handlers:
-            formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-            # Stream handler (console)
-            stream_handler = logging.StreamHandler()
-            stream_handler.setFormatter(formatter)
-            self.logger.addHandler(stream_handler)
-            # Optional file handler
-            try:
-                file_handler = RotatingFileHandler(self.log_file, maxBytes=5 * 1024 * 1024, backupCount=3)
-                file_handler.setFormatter(formatter)
-                self.logger.addHandler(file_handler)
-            except Exception:
-                # If file handler can't be created, log a warning to console
-                stream_handler.setLevel(logging.WARNING)
-                self.logger.warning("Could not create log file handler at %s", self.log_file)
-        self.logger.setLevel(level=logging.INFO)
+            score = result.score.strip().lower()
+            if score not in {constants.YES, constants.NO}:
+                self.logger.warning("Unexpected hallucination score '%s', defaulting to yes", score)
+                score = constants.YES
+
+            self.logger.info(
+                "Hallucination check",
+                extra={"latency": round(latency, 3), "score": score},
+            )
+            return score
+        except Exception as exc:
+            self.logger.error("HallucinationGraderChain failed: %s", exc, exc_info=True)
+            return constants.YES
+
+    @staticmethod
+    def _format_documents(documents: Any) -> str:
+        if documents is None:
+            return "No supporting documents were retrieved."
+        if isinstance(documents, str):
+            return documents
+        if isinstance(documents, Document):
+            return documents.page_content
+        if isinstance(documents, Iterable):
+            parts = []
+            for doc in documents:
+                if isinstance(doc, Document):
+                    parts.append(doc.page_content)
+                else:
+                    parts.append(str(doc))
+            return "\n---\n".join(parts) if parts else "No supporting documents were retrieved."
+        return str(documents)
