@@ -11,6 +11,7 @@ from utils import constants
 
 class HallucinationScore(BaseModel):
     score: str = Field(description="'yes' if grounded, 'no' otherwise")
+    reason: str = Field(description="Brief justification for the decision")
 
 
 class HallucinationGraderChain(BaseAgent):
@@ -18,13 +19,22 @@ class HallucinationGraderChain(BaseAgent):
         [
             (
                 "system",
-                """You check whether the provided answer is grounded in the supplied facts.
-                Respond with JSON containing key 'score' and value 'yes' if the answer is supported,
-                otherwise 'no'.""",
+                """You are a rigorous grounding checker.
+                Decide whether the ANSWER is fully supported by the provided FACTS.
+
+                Rules:
+                - Return JSON only with keys 'score' and 'reason'.
+                - 'score' must be 'yes' if the answer is directly supported by the facts; otherwise 'no'.
+                - If any part of the answer introduces information not present in the facts, respond 'no'.
+                - Do not infer beyond the facts. Paraphrasing is fine if the meaning is preserved.
+                - If facts are empty or irrelevant to the answer, respond 'no'.
+                - Keep 'reason' concise (one sentence).
+
+                Output strictly as a JSON object, with no extra text or code fences.""",
             ),
             (
                 "human",
-                "Facts:\n{documents}\n\nAnswer:\n{generation}",
+                "Facts (numbered):\n{documents}\n\nAnswer:\n{generation}",
             ),
         ]
     )
@@ -63,17 +73,25 @@ class HallucinationGraderChain(BaseAgent):
     @staticmethod
     def _format_documents(documents: Any) -> str:
         if documents is None:
-            return "No supporting documents were retrieved."
+            return "[0] No supporting documents were retrieved."
         if isinstance(documents, str):
             return documents
         if isinstance(documents, Document):
-            return documents.page_content
+            src = documents.metadata.get("source") if isinstance(documents.metadata, dict) else None
+            prefix = "[1] "
+            if src:
+                prefix = f"[1] (source: {src}) "
+            return f"{prefix}{documents.page_content}"
         if isinstance(documents, Iterable):
             parts = []
+            idx = 1
             for doc in documents:
                 if isinstance(doc, Document):
-                    parts.append(doc.page_content)
+                    src = doc.metadata.get("source") if isinstance(doc.metadata, dict) else None
+                    header = f"[{idx}] " if not src else f"[{idx}] (source: {src}) "
+                    parts.append(f"{header}{doc.page_content}")
                 else:
-                    parts.append(str(doc))
-            return "\n---\n".join(parts) if parts else "No supporting documents were retrieved."
+                    parts.append(f"[{idx}] {str(doc)}")
+                idx += 1
+            return "\n---\n".join(parts) if parts else "[0] No supporting documents were retrieved."
         return str(documents)

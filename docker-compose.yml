@@ -18,7 +18,7 @@ services:
       # LLM Provider - set to "ollama", or "gemini"
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       # Ollama Configuration (used when LLM_PROVIDER=ollama for local Ollama)
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-phi3:instruct}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma:7b}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       # Gemini Configuration (used when LLM_PROVIDER=gemini)
       - GEMINI_API_KEY=${GEMINI_API_KEY:-AIzaSyBdCZgCIEinfR--LOCGI0KACrL4ifWIzW8}

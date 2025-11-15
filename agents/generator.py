@@ -13,14 +13,18 @@ class GeneratorChain(BaseAgent):
         [
             (
                 "system",
-                """You are a knowledgeable assistant specializing in IIM Bangalore. Provide accurate,
-                comprehensive, well-structured answers based on the supplied context. Use headings/bullets
-                when useful, cite concrete facts (names, dates, policies) and acknowledge gaps if context
-                is insufficient.""",
+                """You are a knowledgeable assistant specializing in IIM Bangalore.
+                Follow these rules when answering:
+                - Use only the provided Context; do not invent facts.
+                - If the Context is insufficient or unrelated, say you don't have enough information.
+                - Start with a brief Summary, then provide Details with bullets.
+                - Cite using bracketed indices [n] that match the numbered Context items.
+                - Add a final 'Sources' section listing the referenced [n] with any available source metadata.
+                - Keep the tone concise, neutral, and helpful.""",
             ),
             (
                 "human",
-                "Question: {question}\nContext:\n{context}\nAnswer:",
+                "Question: {question}\nContext (numbered):\n{context}\n\nAnswer:",
             ),
         ]
     )
@@ -59,17 +63,25 @@ class GeneratorChain(BaseAgent):
         """Normalize various context payloads to a string."""
 
         if context is None:
-            return "No retrieved documents."
+            return "[0] No retrieved documents."
         if isinstance(context, str):
             return context
         if isinstance(context, Document):
-            return context.page_content
+            src = context.metadata.get("source") if isinstance(context.metadata, dict) else None
+            prefix = "[1] "
+            if src:
+                prefix = f"[1] (source: {src}) "
+            return f"{prefix}{context.page_content}"
         if isinstance(context, Iterable):
             parts = []
+            idx = 1
             for chunk in context:
                 if isinstance(chunk, Document):
-                    parts.append(chunk.page_content)
+                    src = chunk.metadata.get("source") if isinstance(chunk.metadata, dict) else None
+                    header = f"[{idx}] " if not src else f"[{idx}] (source: {src}) "
+                    parts.append(f"{header}{chunk.page_content}")
                 else:
-                    parts.append(str(chunk))
-            return "\n\n".join(parts) if parts else "No retrieved documents."
+                    parts.append(f"[{idx}] {str(chunk)}")
+                idx += 1
+            return "\n\n".join(parts) if parts else "[0] No retrieved documents."
         return str(context)
