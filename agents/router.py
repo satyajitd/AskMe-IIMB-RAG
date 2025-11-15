@@ -22,10 +22,25 @@ class RouterChain(BaseAgent):
         [
             (
                 "system",
-                """You route user queries to either the vectorstore (IIM Bangalore related)
-                or mark them off-topic. Only treat questions about IIM Bangalore faculties, policies,
-                courses, facilities, admissions, programs, or research as vectorstore candidates.
-                Return a JSON with key 'datasource' and value 'vector_store' or 'off_topic'.""",
+                """You are a routing assistant for IIM Bangalore queries. Route questions to the vectorstore if they are about:
+                - IIM Bangalore faculty (directors, professors, staff, their expertise, contact info)
+                - Student policies, rules, guidelines, code of conduct
+                - Courses, programs, curriculum, MBA, Executive programs
+                - Campus facilities (library, hostels, sports, dining, IT services)
+                - Admissions, eligibility, application process, entrance exams
+                - Research activities, centers, publications, projects
+                - Any other IIM Bangalore institutional information
+                
+                Mark as off-topic ONLY if the question is clearly unrelated to IIM Bangalore (e.g., general knowledge, other universities, unrelated topics).
+                
+                Examples:
+                - "Who is the director of IIM Bangalore?" -> vector_store
+                - "What are the hostel facilities?" -> vector_store
+                - "Tell me about faculty research" -> vector_store
+                - "What is machine learning?" -> off_topic
+                - "How to cook pasta?" -> off_topic
+                
+                Return JSON: {{"datasource": "vector_store"}} or {{"datasource": "off_topic"}}""",
             ),
             (
                 "human",

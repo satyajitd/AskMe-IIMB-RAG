@@ -16,7 +16,7 @@ services:
       # Tavily API
       - TAVILY_API_KEY=${TAVILY_API_KEY:-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}
       # LLM Provider - set to "ollama", or "gemini"
-      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       # Ollama Configuration (used when LLM_PROVIDER=ollama for local Ollama)
       - OLLAMA_MODEL=${OLLAMA_MODEL:-phi3:instruct}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
