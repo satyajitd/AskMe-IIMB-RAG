@@ -14,10 +14,12 @@ class LLM:
         
         # Get max tokens from env or use provided value
         if max_tokens is None:
-            max_tokens = int(os.getenv(env.MAX_OUTPUT_TOKENS, "512"))
+            max_tokens = int(os.getenv(env.MAX_OUTPUT_TOKENS))
         
         if provider == constants.GEMINI:
             return cls._create_gemini(max_tokens)
+        elif provider == constants.OLLAMA_CLOUD:
+            return cls._create_ollama_cloud(max_tokens)
         else:  # default to local ollama
             return cls._create_ollama(max_tokens)
     
@@ -31,6 +33,24 @@ class LLM:
             model=model,
             base_url=base_url,
             num_predict=max_tokens
+        )
+    
+    @staticmethod
+    def _create_ollama_cloud(max_tokens: int):
+        """Create Ollama Cloud LLM instance"""
+        model = os.getenv(env.OLLAMA_MODEL)
+        base_url = os.getenv(env.OLLAMA_BASE_URL)
+        api_key = os.getenv(env.OLLAMA_CLOUD_API_KEY)
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+        }
+
+        return ChatOllama(
+            model=model,
+            base_url=base_url,
+            num_predict=max_tokens,
+            client_kwargs={"headers": headers}
         )
     
     @staticmethod

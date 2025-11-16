@@ -126,11 +126,13 @@ class Workflow:
 
     def grade_generation(self, state: State) -> str:
         """
-        Grade the generated answer for hallucinations.
+        Grade the generated answer for hallucinations and decide next step.
+        If the answer is not grounded and we haven't done a web search yet,
+        route to web search to augment context; otherwise request regeneration.
         Args:
             state (dict): The current graph state.
         Returns:
-            str: "supported" if generation is grounded in documents, "not_supported" otherwise.
+            str: One of "supported", "web_search", or "not_supported".
         """
         question = state[constants.QUESTION]
         documents = state[constants.DOCUMENTS]
@@ -148,7 +150,13 @@ class Workflow:
             self.logger.info("Generation is grounded in the documents.")
             return constants.SUPPORTED
 
-        self.logger.info("Generation is not grounded in the documents, regenerating.")
+        # Not grounded – if we haven't tried web search yet, do it now
+        if state.get(constants.WEB_SEARCH) != constants.YES:
+            self.logger.info("Generation not grounded; routing to web search.")
+            return constants.WEB_SEARCH
+
+        # We already included web results; try regeneration once more
+        self.logger.info("Generation not grounded even after web search; regenerating.")
         return constants.NOT_SUPPORTED
 
     def handle_off_topic(self, state: State) -> dict:
@@ -259,6 +267,7 @@ class Workflow:
             constants.GENERATE,
             self.grade_generation,
             {
+                constants.WEB_SEARCH: constants.WEB_SEARCH,
                 constants.NOT_SUPPORTED: constants.GENERATE,
                 constants.SUPPORTED: END,
             },
