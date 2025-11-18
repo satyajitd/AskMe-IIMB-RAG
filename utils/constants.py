@@ -24,3 +24,5 @@ GEMINI="gemini"
 OLLAMA="ollama"
 OLLAMA_CLOUD="ollama-cloud"
 WEAVIATE_SEARCH_MODE_HYBRID="hybrid"
+ATTEMPTS="attempts"
+MAX_ATTEMPTS=3

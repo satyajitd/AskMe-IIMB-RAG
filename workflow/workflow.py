@@ -1,4 +1,5 @@
 from typing import Optional
+import asyncio
 
 from langchain_core.documents import Document
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -12,7 +13,7 @@ from workflow.state import State
 
 from agents.router import RouterChain
 from agents.generator import GeneratorChain
-from agents.hallucination_grader import HallucinationGraderChain
+from agents.answer_grader import AnswerGraderChain
 
 from utils.logger import configure_logger
 
@@ -22,14 +23,14 @@ class Workflow:
         self,
         router: Optional[RouterChain] = None,
         generator: Optional[GeneratorChain] = None,
-        hallucination_grader: Optional[HallucinationGraderChain] = None,
+        answer_grader: Optional[AnswerGraderChain] = None,
         vector_store_instance=None,
         checkpointer: Optional[BaseCheckpointSaver] = None,
     ):
         # Initialize RAG components (allow dependency injection for testing)
         self.router = router or RouterChain()
         self.generator = generator or GeneratorChain()
-        self.hallucination_grader = hallucination_grader or HallucinationGraderChain()
+        self.answer_grader = answer_grader or AnswerGraderChain()
 
         # Initialize vector store
         self.vector_store = vector_store_instance or vector_store
@@ -72,12 +73,25 @@ class Workflow:
         try:
             question = state[constants.QUESTION]
             documents = state[constants.DOCUMENTS]
+            web_documents = state.get(constants.WEB_SEARCH_DOCS, [])
+
+            # If web documents exist but aren't already included, append them (with simple de-dup by content)
+            combined_docs = list(documents)
+            if web_documents:
+                seen = {getattr(d, "page_content", "") for d in combined_docs if isinstance(d, Document)}
+                to_add = [d for d in web_documents if isinstance(d, Document) and getattr(d, "page_content", "") not in seen]
+                if to_add:
+                    combined_docs.extend(to_add)
+                    self.logger.info("Appended %d web docs to context (total=%d)", len(to_add), len(combined_docs))
+            
+            attempts = int(state.get(constants.ATTEMPTS, 0)) + 1
             self.logger.info("Generating answer for question: %s", question)
-            generation = self.generator.invoke({constants.CONTEXT: documents, constants.QUESTION: question})
-            return {constants.DOCUMENTS: documents, constants.QUESTION: question, constants.GENERATION: generation}
+            generation = self.generator.invoke({constants.CONTEXT: combined_docs, constants.QUESTION: question})
+            return {constants.DOCUMENTS: combined_docs, constants.QUESTION: question, constants.GENERATION: generation, constants.ATTEMPTS: attempts}
         except Exception as e:
             self.logger.error("Error generating answer: %s", e)
-            return {constants.DOCUMENTS: documents, constants.QUESTION: question, constants.GENERATION: ""}
+            attempts = int(state.get(constants.ATTEMPTS, 0)) + 1
+            return {constants.DOCUMENTS: state.get(constants.DOCUMENTS, []), constants.QUESTION: question, constants.GENERATION: "", constants.ATTEMPTS: attempts}
 
     # Methods representing decision nodes
     def route_question(self, state: State) -> str:
@@ -124,40 +138,43 @@ class Workflow:
             self.logger.info("Decision: Generate answer with %d documents.", len(documents))
             return constants.GENERATE
 
-    def grade_generation(self, state: State) -> str:
+    def grade_answer(self, state: State) -> str:
         """
-        Grade the generated answer for hallucinations and decide next step.
-        If the answer is not grounded and we haven't done a web search yet,
+        Grade the generated answer for sufficiency/grounding and decide next step.
+        If the answer is insufficient and we haven't done a web search yet,
         route to web search to augment context; otherwise request regeneration.
-        Args:
-            state (dict): The current graph state.
-        Returns:
-            str: One of "supported", "web_search", or "not_supported".
         """
         question = state[constants.QUESTION]
         documents = state[constants.DOCUMENTS]
         generation = state[constants.GENERATION]
-        self.logger.info("Grading generation for hallucinations for question: %s", question)
+        attempts = int(state.get(constants.ATTEMPTS, 0))
+        self.logger.info("Grading answer sufficiency for question: %s", question)
 
-        # Check hallucination
+        # Check answer sufficiency
         try:
-            grade = self.hallucination_grader.invoke({constants.DOCUMENTS: documents, constants.GENERATION: generation})
+            grade = self.answer_grader.invoke({constants.QUESTION: question, constants.DOCUMENTS: documents, constants.GENERATION: generation})
         except Exception:
-            self.logger.warning("Hallucination grader failed, assuming supported.")
+            self.logger.warning("Answer grader failed, assuming supported.")
             return constants.SUPPORTED
 
         if not grade or grade.strip().lower() != constants.NO:
-            self.logger.info("Generation is grounded in the documents.")
+            self.logger.info("Answer is sufficient and grounded.")
             return constants.SUPPORTED
 
-        # Not grounded – if we haven't tried web search yet, do it now
+        max_attempts = constants.MAX_ATTEMPTS
+        # Not grounded – first try web search if not done yet
         if state.get(constants.WEB_SEARCH) != constants.YES:
-            self.logger.info("Generation not grounded; routing to web search.")
+            self.logger.info("Answer insufficient (attempt %d); routing to web search.", attempts)
             return constants.WEB_SEARCH
 
-        # We already included web results; try regeneration once more
-        self.logger.info("Generation not grounded even after web search; regenerating.")
-        return constants.NOT_SUPPORTED
+        # Web search already done. If attempts < max_attempts, regenerate.
+        if attempts < max_attempts:
+            self.logger.info("Insufficient after web search (attempt %d < %d); regenerating.", attempts, max_attempts)
+            return constants.NOT_SUPPORTED
+
+        # Exceeded attempts – finalize.
+        self.logger.info("Insufficient after %d attempts; stopping regeneration.", attempts)
+        return constants.SUPPORTED
 
     def handle_off_topic(self, state: State) -> dict:
         """
@@ -184,7 +201,7 @@ class Workflow:
         }
 
     # Methods representing external tools
-    def web_search(self, state: State) -> dict:
+    async def web_search(self, state: State) -> dict:
         """
         Perform a web search based on the question.
 
@@ -200,27 +217,44 @@ class Workflow:
         self.logger.info("Performing web search for question: %s", question)
 
         try:
-            response = web_search_tool.invoke(question)
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, web_search_tool.invoke, question)
             self.logger.info("Web search response type: %s", type(response))
             
-            # TavilySearch returns a string with search results
-            if isinstance(response, str):
-                web_results = Document(page_content=response)
-            elif isinstance(response, list):
-                # If it returns a list, join the content
-                web_results_text = "\n".join([
-                    res.get(constants.CONTENT, str(res)) if isinstance(res, dict) else str(res) 
-                    for res in response
-                ])
-                web_results = Document(page_content=web_results_text)
+            web_search_docs = []
+            # Tavily typically returns a list of dicts with content/title/url
+            if isinstance(response, list):
+                for item in response:
+                    if isinstance(item, dict):
+                        text = item.get(constants.CONTENT) or item.get("snippet") or ""
+                        if not text:
+                            continue
+                        metadata = {
+                            "source": "web",
+                            "source_title": item.get("title"),
+                            "source_url": item.get("url"),
+                            "query": question,
+                            "provider": "tavily",
+                        }
+                        web_search_docs.append(Document(page_content=text, metadata=metadata))
+            elif isinstance(response, str):
+                web_search_docs.append(
+                    Document(page_content=response, metadata={"source": "web", "query": question, "provider": "tavily"})
+                )
             else:
-                web_results = Document(page_content=str(response))
-            
-            # Store web search results separately
-            web_search_docs = [web_results]
+                web_search_docs.append(
+                    Document(page_content=str(response), metadata={"source": "web", "query": question, "provider": "tavily"})
+                )
 
-            # Also append to documents for generation
-            documents_copy.append(web_results)
+            # Append web docs to current working context
+            documents_copy.extend(web_search_docs)
+
+            # Persist to vector store for continuous learning
+            try:
+                ingested = await loop.run_in_executor(None, self.vector_store.upsert_documents, web_search_docs)
+                self.logger.info("Persisted %d web results to vector store", ingested)
+            except Exception as persist_exc:
+                self.logger.error("Failed to persist web results: %s", persist_exc)
                 
         except Exception as e:
             self.logger.error("Error during web search: %s", e)
@@ -265,7 +299,7 @@ class Workflow:
         graph.add_edge(constants.WEB_SEARCH, constants.GENERATE)
         graph.add_conditional_edges(
             constants.GENERATE,
-            self.grade_generation,
+            self.grade_answer,
             {
                 constants.WEB_SEARCH: constants.WEB_SEARCH,
                 constants.NOT_SUPPORTED: constants.GENERATE,

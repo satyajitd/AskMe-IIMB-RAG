@@ -13,6 +13,7 @@ from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.vector_stores.weaviate import WeaviateVectorStore
 from llama_index.embeddings.fastembed import FastEmbedEmbedding
 from llama_index.core.schema import NodeWithScore
+from datetime import datetime, timezone
 
 
 class VectorStore:
@@ -116,6 +117,44 @@ class VectorStore:
         self.logger.info(f"Hybrid retrieved {len(documents)} documents.")
         return documents
 
+    def upsert_documents(self, documents: List[Document]) -> int:
+        """Insert or update documents into Weaviate with embeddings and metadata.
+
+        Each document's `page_content` is stored under the `text` property. All
+        `Document.metadata` fields are persisted as Weaviate properties. A few
+        system fields are added when missing: `source`, `ingested_at`, `ingest_via`.
+
+        Returns the number of documents successfully upserted.
+        """
+        if not documents:
+            return 0
+
+        collection = self.client.collections.get(self.collection_name)
+        ingested = 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        for doc in documents:
+            try:
+                text = (doc.page_content or "").strip()
+                if not text:
+                    continue
+
+                meta = dict(doc.metadata or {})
+                meta.setdefault("source", meta.get("source", "web"))
+                meta.setdefault("ingest_via", "auto-web-search")
+                meta["ingested_at"] = now_iso
+
+                vec = self.embed_model.get_text_embedding(text)
+                properties = {**meta, "text": text}
+
+                collection.data.insert(properties=properties, vector=vec)
+                ingested += 1
+            except Exception as exc:
+                self.logger.warning("Failed to upsert document: %s", exc)
+
+        self.logger.info("Upserted %d documents into Weaviate", ingested)
+        return ingested
+    
     def configure_logging(self):
         self.logger = configure_logger(self.__class__.__name__)
     
@@ -128,6 +167,5 @@ class VectorStore:
     def __del__(self):
         """Ensure Weaviate client is closed on object destruction."""
         self.close()
-
 
 vector_store = VectorStore()

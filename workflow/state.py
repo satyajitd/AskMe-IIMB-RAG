@@ -10,4 +10,5 @@ class State(TypedDict):
     web_search: NotRequired[str]
     documents: NotRequired[List[Document]]
     web_search_docs: NotRequired[List[Document]]
+    attempts: NotRequired[int]
     
