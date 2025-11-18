@@ -10,11 +10,11 @@ langgraph-cli[inmem]
 
 # LlamaIndex for vector store
 llama-index-core
-llama-index-vector-stores-chroma
+llama-index-vector-stores-weaviate
 llama-index-embeddings-fastembed
 
 # Vector database
-chromadb
+weaviate-client
 
 # Embeddings
 fastembed
