@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: on-failure
     container_name: askme-rag
     ports:
       - "8123:8123"
